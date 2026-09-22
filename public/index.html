@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>location sharing app</title>
+     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+     crossorigin=""/>
+     <style>
+        #map { height: 90vh; }
+     </style>
+</head>
+<body>
+    <div id="map"></div>
+     
+ <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+     crossorigin=""></script>
+    <script src="/socket.io/socket.io.js"></script>
+
+    <script>
+        // Create a Socket.IO connection to the server that served this page.
+        const socket=io()
+
+        // Create the Leaflet map and choose its initial center and zoom.
+        const map = L.map('map').setView([51.505, -0.09], 13);
+
+        const remoteMarkers=new Map();
+        socket.on('server:location:updates',(data)=>{
+            const {id,latitude,longitude}=data;
+
+            // The local browser already owns a marker for its own location.
+            if(id===socket.id){
+                return;
+            }
+
+            // Keep one marker per remote socket and move it as updates arrive.
+            if(!remoteMarkers.has(id)){
+                const marker=L.marker([latitude,longitude]).addTo(map).bindPopup(id)
+                remoteMarkers.set(id,marker);
+            }else{
+                const existingMarker=remoteMarkers.get(id)
+                existingMarker.setLatLng([latitude,longitude])
+
+            }
+        })
+
+
+        // Add OpenStreetMap tiles as the visual map background.
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+}).addTo(map);
+
+function getUserCurrentLocation(){
+    // Convert the browser callback API into a Promise so it can be used with await.
+    return new Promise((res,rej)=>{
+    // Check whether this browser provides the Geolocation API.
+    if ("geolocation" in navigator) {
+
+    // Ask the browser for the user's current coordinates.
+    navigator.geolocation.getCurrentPosition((position)=>{
+        // Read latitude and longitude from the successful position response.
+        const latitude=position.coords.latitude
+        const longitude=position.coords.longitude
+        res({latitude,longitude})
+
+    },(err)=>{
+        // Reject the Promise if permission is denied or location lookup fails.
+        rej(err)
+    },{enableHighAccuracy:true}
+
+    )
+      
+    
+    } else {
+    // Reject when the browser does not support geolocation at all.
+    rej(new Error("Geolocation is not supported by this browser."));
+    }
+
+    })
+
+}
+
+// Keep one marker and move it when the user's location changes.
+let myCurrentLocationMarker=null
+
+async function main(){
+    // Fetch, send, and display the latest location.
+    async function updateLocation(){
+        try {
+            const {latitude,longitude}=await getUserCurrentLocation()
+
+            // Send the coordinates to the server for other connected users.
+            socket.emit('client:location:update',{latitude,longitude})
+
+            if(!myCurrentLocationMarker){
+                // Create the marker only on the first successful location lookup.
+                myCurrentLocationMarker=L.marker([latitude,longitude])
+            .addTo(map)
+            .bindPopup('You are here')
+            }else{
+                // Reuse the existing marker instead of creating a new one each time.
+                myCurrentLocationMarker.setLatLng([latitude,longitude])
+            }
+                } catch (error) {
+                    console.error('Unable to get your location',error)
+        }
+    }
+
+    // Show the marker immediately, then refresh the location every 10 seconds.
+    updateLocation()
+    setInterval(updateLocation,10*1000);
+}
+// Start location tracking after the page has finished loading.
+window.addEventListener('load',main)
+    </script>
+    
+</body>
+</html>
